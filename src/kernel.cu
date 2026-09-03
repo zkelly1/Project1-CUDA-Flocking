@@ -246,11 +246,70 @@ void Boids::copyBoidsToVBO(float *vbodptr_positions, float *vbodptr_velocities) 
 * Compute the new velocity on the body with index `iSelf` due to the `N` boids
 * in the `pos` and `vel` arrays.
 */
+
+__device__ glm::vec3 rule1(int N, int iSelf, const glm::vec3 *pos) {
+  glm::vec3 perceived_center(0.0f);
+  unsigned int number_of_neighbors = 0;
+
+  for (int b_i = 0; b_i < N; b_i++) {
+    if(b_i != iSelf && glm::distance(pos[b_i], pos[iSelf]) < rule1Distance) {
+      perceived_center += pos[b_i];
+      number_of_neighbors++;
+    }
+  }
+
+  if (number_of_neighbors == 0) {
+    return glm::vec3(0.0f);
+  }
+
+  perceived_center /= number_of_neighbors;
+
+  return (perceived_center - pos[iSelf]) * rule1Scale;
+}
+
+__device__ glm::vec3 rule2(int N, int iSelf, const glm::vec3 *pos) {
+  glm::vec3 c(0.0f);
+
+  for (int b_i = 0; b_i < N; b_i++) {
+    if(b_i != iSelf && glm::distance(pos[b_i], pos[iSelf]) < rule2Distance) {
+      c -= (pos[b_i] - pos[iSelf]);
+    }
+  }
+
+  return c * rule2Scale;
+}
+
+__device__ glm::vec3 rule3(int N, int iSelf, const glm::vec3 *pos,
+  const glm::vec3 *vel) {
+  glm::vec3 perceived_velocity(0.0f);
+  unsigned int number_of_neighbors = 0;
+
+  for (int b_i = 0; b_i < N; b_i++) {
+    if(b_i != iSelf && glm::distance(pos[b_i], pos[iSelf]) < rule3Distance) {
+      perceived_velocity += vel[b_i];
+      number_of_neighbors++;
+    }
+  }
+
+  if (number_of_neighbors == 0) {
+    return glm::vec3(0.0f);
+  }
+
+  perceived_velocity /= number_of_neighbors;
+  return perceived_velocity * rule3Scale;
+}
+
 __device__ glm::vec3 computeVelocityChange(int N, int iSelf, const glm::vec3 *pos, const glm::vec3 *vel) {
   // Rule 1: boids fly towards their local perceived center of mass, which excludes themselves
+  glm::vec3 perceived_center = rule1(N, iSelf, pos);
+
   // Rule 2: boids try to stay a distance d away from each other
+  glm::vec3 c = rule2(N, iSelf, pos);
+
   // Rule 3: boids try to match the speed of surrounding boids
-  return glm::vec3(0.0f, 0.0f, 0.0f);
+  glm::vec3 perceived_velocity = rule3(N, iSelf, pos, vel);
+
+  return perceived_center + c + perceived_velocity;
 }
 
 /**
