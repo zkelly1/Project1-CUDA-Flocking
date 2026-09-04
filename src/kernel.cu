@@ -318,9 +318,23 @@ __device__ glm::vec3 computeVelocityChange(int N, int iSelf, const glm::vec3 *po
 */
 __global__ void kernUpdateVelocityBruteForce(int N, glm::vec3 *pos,
   glm::vec3 *vel1, glm::vec3 *vel2) {
+  int index = threadIdx.x + (blockIdx.x * blockDim.x);
+  if (index >= N) {
+    return;
+  }
+
   // Compute a new velocity based on pos and vel1
+  glm::vec3 new_velocity = vel1[index]
+    + computeVelocityChange(N, index, pos, vel1);
+
   // Clamp the speed
+  float speed = glm::length(new_velocity);
+  if (speed > maxSpeed) {
+    new_velocity *= maxSpeed / speed;
+  }
+
   // Record the new velocity into vel2. Question: why NOT vel1?
+  vel2[index] = new_velocity;
 }
 
 /**
@@ -424,7 +438,21 @@ __global__ void kernUpdateVelNeighborSearchCoherent(
 */
 void Boids::stepSimulationNaive(float dt) {
   // TODO-1.2 - use the kernels you wrote to step the simulation forward in time.
+  dim3 fullBlocksPerGrid(static_cast<int>(
+    std::ceil(static_cast<float>(numObjects) / static_cast<float>(blockSize))));
+
+  kernUpdateVelocityBruteForce<<<fullBlocksPerGrid, threadsPerBlock>>>(
+    numObjects, dev_pos, dev_vel1, dev_vel2);
+  checkCUDAErrorWithLine("kernUpdateVelocityBruteForce failed!");
+
+  kernUpdatePos<<<fullBlocksPerGrid, threadsPerBlock>>>(
+    numObjects, dt, dev_pos, dev_vel2);
+  checkCUDAErrorWithLine("kernUpdatePos failed!");
+
   // TODO-1.2 ping-pong the velocity buffers
+  glm::vec3 *tmp = dev_vel1;
+  dev_vel1 = dev_vel2;
+  dev_vel2 = tmp;
 }
 
 void Boids::stepSimulationScatteredGrid(float dt) {
