@@ -9,9 +9,14 @@
 #include "main.hpp"
 #include "kernel.h"
 
+#include <algorithm>
 #include <iostream>
+#include <fstream>
+#include <filesystem>
 #include <memory>
 #include <sstream>
+#include <string>
+#include <vector>
 
 #include <cuda_runtime.h>
 #include <cuda_gl_interop.h>
@@ -21,20 +26,44 @@
 // Configuration
 // ================
 
-// LOOK-2.1 LOOK-2.3 - toggles for UNIFORM_GRID and COHERENT_GRID
-#define VISUALIZE 1
-#define UNIFORM_GRID 0
-#define COHERENT_GRID 0
-
 // LOOK-1.2 - change this to adjust particle count in the simulation
-const int N_FOR_VIS = 5000;
+int number_of_boids = 5000;
 const float DT = 0.2f;
+
+enum class SimulationMode {
+  Naive,
+  Scattered,
+  Coherent
+};
+
+SimulationMode simulation_mode = SimulationMode::Coherent;
+bool window_profile = false;
+int warmup_frames = 0;
+int measured_frames = 0;
+int capture_every = 0;
+std::string capture_directory;
+
+SimulationMode readSimulationMode(const std::string &name);
+const char *simulationModeName();
+void stepSelectedSimulation();
+int runBenchmark(int argc, char **argv);
+bool readWindowProfileArguments(int argc, char **argv);
+void saveFramebuffer(const std::string &path);
 
 /**
 * C main function.
 */
 int main(int argc, char* argv[]) {
   projectName = "5650 CUDA Intro: Boids";
+
+  if (argc > 1 && std::string(argv[1]) == "--benchmark") {
+    return runBenchmark(argc, argv);
+  }
+  if (argc > 1 && std::string(argv[1]) == "--window-profile") {
+    if (!readWindowProfileArguments(argc, argv)) {
+      return 1;
+    }
+  }
 
   if (init(argc, argv)) {
     mainLoop();
@@ -43,6 +72,168 @@ int main(int argc, char* argv[]) {
   } else {
     return 1;
   }
+}
+
+SimulationMode readSimulationMode(const std::string &name) {
+  if (name == "naive") {
+    return SimulationMode::Naive;
+  }
+  if (name == "scattered") {
+    return SimulationMode::Scattered;
+  }
+  return SimulationMode::Coherent;
+}
+
+const char *simulationModeName() {
+  if (simulation_mode == SimulationMode::Naive) {
+    return "naive";
+  }
+  if (simulation_mode == SimulationMode::Scattered) {
+    return "scattered";
+  }
+  return "coherent";
+}
+
+void stepSelectedSimulation() {
+  if (simulation_mode == SimulationMode::Naive) {
+    Boids::stepSimulationNaive(DT);
+  }
+  else if (simulation_mode == SimulationMode::Scattered) {
+    Boids::stepSimulationScatteredGrid(DT);
+  }
+  else {
+    Boids::stepSimulationCoherentGrid(DT);
+  }
+}
+
+int runBenchmark(int argc, char **argv) {
+  if (argc != 8) {
+    std::cerr << "Usage: cis5650_boids --benchmark "
+      << "<naive|scattered|coherent> <boids> <block-size> "
+      << "<cell-width-multiplier> <warmup-steps> <measured-steps>"
+      << std::endl;
+    return 1;
+  }
+
+  std::string mode_name = argv[2];
+  if (mode_name != "naive" && mode_name != "scattered"
+    && mode_name != "coherent") {
+    std::cerr << "Unknown simulation mode: " << mode_name << std::endl;
+    return 1;
+  }
+
+  simulation_mode = readSimulationMode(mode_name);
+  number_of_boids = std::stoi(argv[3]);
+  int block_size = std::stoi(argv[4]);
+  float cell_width_multiplier = std::stof(argv[5]);
+  int benchmark_warmup_steps = std::stoi(argv[6]);
+  int benchmark_measured_steps = std::stoi(argv[7]);
+
+  if (number_of_boids <= 0 || block_size <= 0 || block_size > 1024
+    || cell_width_multiplier <= 0.0f || benchmark_warmup_steps < 0
+    || benchmark_measured_steps <= 0) {
+    std::cerr << "Invalid benchmark argument." << std::endl;
+    return 1;
+  }
+
+  Boids::setBlockSize(block_size);
+  Boids::setGridCellWidthMultiplier(cell_width_multiplier);
+  Boids::initSimulation(number_of_boids);
+
+  for (int i = 0; i < benchmark_warmup_steps; i++) {
+    stepSelectedSimulation();
+  }
+  cudaDeviceSynchronize();
+
+  cudaEvent_t start;
+  cudaEvent_t stop;
+  cudaEventCreate(&start);
+  cudaEventCreate(&stop);
+  cudaEventRecord(start);
+
+  for (int i = 0; i < benchmark_measured_steps; i++) {
+    stepSelectedSimulation();
+  }
+
+  cudaEventRecord(stop);
+  cudaEventSynchronize(stop);
+  float elapsed_ms = 0.0f;
+  cudaEventElapsedTime(&elapsed_ms, start, stop);
+
+  std::cout << simulationModeName() << ","
+    << number_of_boids << ","
+    << block_size << ","
+    << cell_width_multiplier << ","
+    << benchmark_measured_steps << ","
+    << elapsed_ms / benchmark_measured_steps << ","
+    << benchmark_measured_steps * 1000.0f / elapsed_ms << std::endl;
+
+  cudaEventDestroy(start);
+  cudaEventDestroy(stop);
+  Boids::endSimulation();
+  return 0;
+}
+
+bool readWindowProfileArguments(int argc, char **argv) {
+  if (argc != 8 && argc != 10) {
+    std::cerr << "Usage: cis5650_boids --window-profile "
+      << "<naive|scattered|coherent> <boids> <block-size> "
+      << "<cell-width-multiplier> <warmup-frames> <measured-frames> "
+      << "[capture-directory capture-every]" << std::endl;
+    return false;
+  }
+
+  std::string mode_name = argv[2];
+  if (mode_name != "naive" && mode_name != "scattered"
+    && mode_name != "coherent") {
+    std::cerr << "Unknown simulation mode: " << mode_name << std::endl;
+    return false;
+  }
+
+  simulation_mode = readSimulationMode(mode_name);
+  number_of_boids = std::stoi(argv[3]);
+  int block_size = std::stoi(argv[4]);
+  float cell_width_multiplier = std::stof(argv[5]);
+  warmup_frames = std::stoi(argv[6]);
+  measured_frames = std::stoi(argv[7]);
+  window_profile = true;
+
+  if (argc == 10) {
+    capture_directory = argv[8];
+    capture_every = std::stoi(argv[9]);
+    std::filesystem::create_directories(capture_directory);
+  }
+
+  if (number_of_boids <= 0 || block_size <= 0 || block_size > 1024
+    || cell_width_multiplier <= 0.0f || warmup_frames < 0
+    || measured_frames <= 0 || capture_every < 0) {
+    std::cerr << "Invalid window-profile argument." << std::endl;
+    return false;
+  }
+
+  Boids::setBlockSize(block_size);
+  Boids::setGridCellWidthMultiplier(cell_width_multiplier);
+  return true;
+}
+
+void saveFramebuffer(const std::string &path) {
+  std::vector<unsigned char> pixels(width * height * 3);
+  std::vector<unsigned char> flipped(width * height * 3);
+
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glReadBuffer(GL_BACK);
+  glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+
+  int row_size = width * 3;
+  for (int y = 0; y < height; y++) {
+    std::copy(pixels.begin() + y * row_size,
+      pixels.begin() + (y + 1) * row_size,
+      flipped.begin() + (height - y - 1) * row_size);
+  }
+
+  std::ofstream file(path, std::ios::binary);
+  file << "P6\n" << width << " " << height << "\n255\n";
+  file.write(reinterpret_cast<const char *>(flipped.data()), flipped.size());
 }
 
 //-------------------------------
@@ -98,6 +289,7 @@ bool init(int argc, char **argv) {
     return false;
   }
   glfwMakeContextCurrent(window);
+  glfwSwapInterval(0);
   glfwSetKeyCallback(window, keyCallback);
   glfwSetCursorPosCallback(window, mousePositionCallback);
   glfwSetMouseButtonCallback(window, mouseButtonCallback);
@@ -118,7 +310,7 @@ bool init(int argc, char **argv) {
   cudaGLRegisterBufferObject(boidVBO_velocities);
 
   // Initialize N-body simulation
-  Boids::initSimulation(N_FOR_VIS);
+  Boids::initSimulation(number_of_boids);
 
   updateCamera();
 
@@ -131,13 +323,13 @@ bool init(int argc, char **argv) {
 
 void initVAO() {
 
-  std::unique_ptr<GLfloat[]> bodies{ new GLfloat[4 * (N_FOR_VIS)] };
-  std::unique_ptr<GLuint[]> bindices{ new GLuint[N_FOR_VIS] };
+  std::unique_ptr<GLfloat[]> bodies{ new GLfloat[4 * number_of_boids] };
+  std::unique_ptr<GLuint[]> bindices{ new GLuint[number_of_boids] };
 
   glm::vec4 ul(-1.0, -1.0, 1.0, 1.0);
   glm::vec4 lr(1.0, 1.0, 0.0, 0.0);
 
-  for (int i = 0; i < N_FOR_VIS; i++) {
+  for (int i = 0; i < number_of_boids; i++) {
     bodies[4 * i + 0] = 0.0f;
     bodies[4 * i + 1] = 0.0f;
     bodies[4 * i + 2] = 0.0f;
@@ -155,19 +347,19 @@ void initVAO() {
 
   // Bind the positions array to the boidVAO by way of the boidVBO_positions
   glBindBuffer(GL_ARRAY_BUFFER, boidVBO_positions); // bind the buffer
-  glBufferData(GL_ARRAY_BUFFER, 4 * (N_FOR_VIS) * sizeof(GLfloat), bodies.get(), GL_DYNAMIC_DRAW); // transfer data
+  glBufferData(GL_ARRAY_BUFFER, 4 * number_of_boids * sizeof(GLfloat), bodies.get(), GL_DYNAMIC_DRAW); // transfer data
 
   glEnableVertexAttribArray(positionLocation);
   glVertexAttribPointer((GLuint)positionLocation, 4, GL_FLOAT, GL_FALSE, 0, 0);
 
   // Bind the velocities array to the boidVAO by way of the boidVBO_velocities
   glBindBuffer(GL_ARRAY_BUFFER, boidVBO_velocities);
-  glBufferData(GL_ARRAY_BUFFER, 4 * (N_FOR_VIS) * sizeof(GLfloat), bodies.get(), GL_DYNAMIC_DRAW);
+  glBufferData(GL_ARRAY_BUFFER, 4 * number_of_boids * sizeof(GLfloat), bodies.get(), GL_DYNAMIC_DRAW);
   glEnableVertexAttribArray(velocitiesLocation);
   glVertexAttribPointer((GLuint)velocitiesLocation, 4, GL_FLOAT, GL_FALSE, 0, 0);
 
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, boidIBO);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER, (N_FOR_VIS) * sizeof(GLuint), bindices.get(), GL_STATIC_DRAW);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, number_of_boids * sizeof(GLuint), bindices.get(), GL_STATIC_DRAW);
 
   glBindVertexArray(0);
 }
@@ -204,18 +396,9 @@ void initShaders(GLuint * program) {
     cudaGLMapBufferObject((void**)&dptrVertPositions, boidVBO_positions);
     cudaGLMapBufferObject((void**)&dptrVertVelocities, boidVBO_velocities);
 
-    // execute the kernel
-    #if UNIFORM_GRID && COHERENT_GRID
-    Boids::stepSimulationCoherentGrid(DT);
-    #elif UNIFORM_GRID
-    Boids::stepSimulationScatteredGrid(DT);
-    #else
-    Boids::stepSimulationNaive(DT);
-    #endif
-
-    #if VISUALIZE
+    stepSelectedSimulation();
     Boids::copyBoidsToVBO(dptrVertPositions, dptrVertVelocities);
-    #endif
+
     // unmap buffer object
     cudaGLUnmapBufferObject(boidVBO_positions);
     cudaGLUnmapBufferObject(boidVBO_velocities);
@@ -225,12 +408,20 @@ void initShaders(GLuint * program) {
     double fps = 0;
     double timebase = 0;
     int frame = 0;
+    int total_profile_frames = 0;
+    int completed_profile_frames = 0;
+    double profile_start = 0;
 
-    Boids::unitTest(); // LOOK-1.2 We run some basic example code to make sure
-                       // your CUDA development setup is ready to go.
+    if (!window_profile) {
+      Boids::unitTest(); // LOOK-1.2 Example test code for the CUDA setup.
+    }
 
     while (!glfwWindowShouldClose(window)) {
       glfwPollEvents();
+
+      if (window_profile && total_profile_frames == warmup_frames) {
+        profile_start = glfwGetTime();
+      }
 
       frame++;
       double time = glfwGetTime();
@@ -252,18 +443,44 @@ void initShaders(GLuint * program) {
 
       glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-      #if VISUALIZE
       glUseProgram(program[PROG_BOID]);
       glBindVertexArray(boidVAO);
       glPointSize((GLfloat)pointSize);
-      glDrawElements(GL_POINTS, N_FOR_VIS + 1, GL_UNSIGNED_INT, 0);
+      glDrawElements(GL_POINTS, number_of_boids, GL_UNSIGNED_INT, 0);
       glPointSize(1.0f);
 
       glUseProgram(0);
       glBindVertexArray(0);
 
+      if (window_profile && !capture_directory.empty()
+        && total_profile_frames >= warmup_frames
+        && capture_every > 0
+        && completed_profile_frames % capture_every == 0) {
+        std::ostringstream filename;
+        filename << capture_directory << "/frame_"
+          << completed_profile_frames << ".ppm";
+        saveFramebuffer(filename.str());
+      }
+
       glfwSwapBuffers(window);
-      #endif
+
+      if (window_profile) {
+        if (total_profile_frames >= warmup_frames) {
+          completed_profile_frames++;
+        }
+        total_profile_frames++;
+
+        if (completed_profile_frames >= measured_frames) {
+          glFinish();
+          double elapsed = glfwGetTime() - profile_start;
+          std::cout << simulationModeName() << ","
+            << number_of_boids << ","
+            << measured_frames << ","
+            << elapsed * 1000.0 / measured_frames << ","
+            << measured_frames / elapsed << std::endl;
+          glfwSetWindowShouldClose(window, GL_TRUE);
+        }
+      }
     }
     glfwDestroyWindow(window);
     glfwTerminate();
