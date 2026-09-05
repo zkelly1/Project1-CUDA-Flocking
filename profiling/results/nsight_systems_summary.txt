@@ -1,0 +1,48 @@
+
+NOTICE: Existing SQLite export found: profiling\results\nsight_systems_coherent.sqlite
+        It is assumed file was previously exported from: profiling\results\nsight_systems_coherent.nsys-rep
+        Consider using --force-export=true if needed.
+
+Processing [profiling\results\nsight_systems_coherent.sqlite] with [C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.1.3\target-windows-x64\reports\cuda_gpu_kern_sum.py]...
+
+ ** CUDA GPU Kernel Summary (cuda_gpu_kern_sum):
+
+ Time (%)  Total Time (ns)  Instances  Avg (ns)  Med (ns)  Min (ns)  Max (ns)  StdDev (ns)                                                  Name
+ --------  ---------------  ---------  --------  --------  --------  --------  -----------  ----------------------------------------------------------------------------------------------------
+     45.2          2139865        240    8916.1    8640.0      7904     10560       1025.7  void cub::_V_300304_SM_860::detail::radix_sort::DeviceRadixSortOnesweepKernel<cub::_V_300304_SM_860�
+     28.8          1365609         60   22760.2   20991.5     18496    152253      17053.3  kernUpdateVelNeighborSearchCoherent(int, int, glm::tvec3<float, (glm::precision)0>, float, float, i�
+      4.7           221054         60    3684.2    3680.0      3648      3744         27.3  void cub::_V_300304_SM_860::detail::radix_sort::DeviceRadixSortHistogramKernel<cub::_V_300304_SM_86�
+      4.5           211230         60    3520.5    3488.0      3296      4320        163.7  kernGatherCoherent(int, int *, glm::tvec3<float, (glm::precision)0> *, glm::tvec3<float, (glm::prec�
+      3.0           139933         60    2332.2    2304.0      2208      2720        102.9  kernComputeIndices(int, int, glm::tvec3<float, (glm::precision)0>, float, glm::tvec3<float, (glm::p�
+      2.7           129629         60    2160.5    2112.0      2079      2912        187.6  kernCopyPositionsToVBO(int, glm::tvec3<float, (glm::precision)0> *, float *, float)
+      2.7           128542        120    1071.2    1056.0      1023      1408         54.1  kernResetIntBuffer(int, int *, int)
+      2.7           127008         60    2116.8    2080.0      2048      2368         71.9  kernCopyVelocitiesToVBO(int, glm::tvec3<float, (glm::precision)0> *, float *, float)
+      2.0            94846         60    1580.8    1568.0      1536      2048         64.1  kernUpdatePos(int, float, glm::tvec3<float, (glm::precision)0> *, glm::tvec3<float, (glm::precision�
+      2.0            92509         60    1541.8    1536.0      1503      1856         59.4  kernIdentifyCellStartEnd(int, int *, int *, int *)
+      1.8            87518         60    1458.6    1472.0      1439      1504         17.0  void cub::_V_300304_SM_860::detail::radix_sort::DeviceRadixSortExclusiveSumKernel<cub::_V_300304_SM�
+      0.0             1376          1    1376.0    1376.0      1376      1376          0.0  kernGenerateRandomPosArray(int, int, glm::tvec3<float, (glm::precision)0> *, float)
+
+Processing [profiling\results\nsight_systems_coherent.sqlite] with [C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.1.3\target-windows-x64\reports\cuda_api_sum.py]...
+
+ ** CUDA API Summary (cuda_api_sum):
+
+ Time (%)  Total Time (ns)  Num Calls  Avg (ns)   Med (ns)  Min (ns)  Max (ns)   StdDev (ns)             Name
+ --------  ---------------  ---------  ---------  --------  --------  ---------  -----------  --------------------------
+     74.6        192154828        120  1601290.2  108573.0     19220  162772539   14838317.1  cudaGLMapBufferObject
+     14.0         36089417         69   523035.0  305636.0      3590    1963638     497738.9  cudaFree
+      3.2          8272883         61   135621.0  100239.0     60369     399454      67798.2  cudaDeviceSynchronize
+      3.1          7869358        901     8734.0    4510.0      3510     877747      30785.7  cudaLaunchKernel
+      2.6          6723617        120    56030.1   51604.5     22610     287605      31275.2  cudaGLUnmapBufferObject
+      0.7          1767708        360     4910.3    2600.0      2120      84899       5937.8  cudaMemsetAsync
+      0.5          1402871         69    20331.5   17760.0      2900     132768      21212.9  cudaMalloc
+      0.4           957786          2   478893.0  478893.0    383005     574781     135606.1  cudaGLRegisterBufferObject
+      0.3           779961         60    12999.4   12799.5      7909      24889       3199.9  cudaStreamSynchronize
+      0.2           572359        901      635.2     240.0       140     291173       9704.4  cuKernelGetName
+      0.2           499427          1   499427.0  499427.0    499427     499427          0.0  cuLibraryUnload
+      0.1           371844          1   371844.0  371844.0    371844     371844          0.0  cuLibraryLoadData
+      0.0            86839          2    43419.5   43419.5      8000      78839      50090.7  cudaMemset
+      0.0            10879         11      989.0     870.0       420       2050        556.2  cuLibraryGetKernel
+      0.0            10270          1    10270.0   10270.0     10270      10270          0.0  cuModuleGetLoadingMode
+      0.0             5120          1     5120.0    5120.0      5120       5120          0.0  cuCtxSynchronize
+      0.0              600          1      600.0     600.0       600        600          0.0  cudaGetDeviceProperties
+      0.0              510          1      510.0     510.0       510        510          0.0  cuDeviceGetLuid

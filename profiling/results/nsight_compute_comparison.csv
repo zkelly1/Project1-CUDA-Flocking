@@ -1,0 +1,5 @@
+metric,scattered,coherent
+kernel_duration_us,42.656000,20.288000
+l1_tex_hit_rate_pct,55.722078,95.319094
+l2_hit_rate_pct,97.738735,66.787517
+long_scoreboard_stall_samples,1689,292

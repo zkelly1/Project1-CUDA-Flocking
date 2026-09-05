@@ -75,7 +75,60 @@ The script averages the three trials, computes standard deviations, draws the fo
 
 The plotting script requires `pandas` and `Pillow`. If those modules are installed in your normal Python environment, you can use `py .\profiling\make_outputs.py` instead.
 
-## 7. Understanding the source changes
+## 7. Record and open the NVIDIA Nsight reports
+
+The automated route is:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\profiling\run_nsight_profiles.ps1
+```
+
+This launches the application three times. Nsight Systems records one visualized coherent run. Nsight Compute then profiles one scattered neighbor-kernel launch and one coherent neighbor-kernel launch with the `detailed` section set. The script exports the reports, text/CSV data, and README images.
+
+To open the interactive reports yourself:
+
+```powershell
+& "C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.1.3\host-windows-x64\nsys-ui.exe" `
+  .\profiling\results\nsight_systems_coherent.nsys-rep
+
+& "C:\Program Files\NVIDIA Corporation\Nsight Compute 2026.2.1\ncu-ui.bat" `
+  .\profiling\results\nsight_compute_coherent.ncu-rep
+```
+
+If your installed version is different, replace the version number in the path. You can also open either application from the Start menu and use **File > Open** to select its report.
+
+### Nsight Systems, step by step
+
+1. Open NVIDIA Nsight Systems and create a new project or profiling session.
+2. Select the local computer as the target.
+3. Set the application to `build\bin\Release\cis5650_boids.exe` and the working directory to the repository root.
+4. Use `--window-profile coherent 20000 128 2 15 45` as the command-line arguments.
+5. Enable CUDA and OpenGL tracing. CPU sampling is optional and is disabled in the supplied script to keep this GPU timeline small.
+6. Start the capture. The application exits automatically after the requested frames and Systems creates the report.
+7. In the timeline, expand the process, CUDA HW, and CUDA API rows. Drag across a short interval to zoom into one frame. Click a kernel bar to see its duration and launch details. Open **CUDA GPU Kernel Summary** to see which kernels consume the most total GPU time.
+
+Use Systems when the question is about the whole program: which kernels run, their order, time between launches, CUDA API overhead, or whether CPU and GPU work overlap.
+
+### Nsight Compute, step by step
+
+1. Open NVIDIA Nsight Compute and choose **Start Activity**, then **Profile**.
+2. Set the application and working directory to the same values as above.
+3. For coherent mode, use `--benchmark coherent 20000 128 2 1 1` as the arguments.
+4. In the filter settings, select kernel-name base **function** and filter for `kernUpdateVelNeighborSearchCoherent`. Set launch skip to 1 and launch count to 1. This ignores the first matching warmup launch and collects one measured launch.
+5. Select the `detailed` section set and choose an output report path.
+6. Launch the activity. The tool replays the chosen kernel several times because the GPU cannot collect every hardware counter in one pass.
+7. Start with **Summary** or **Details**. Read **GPU Speed of Light** for compute and memory utilization, **Memory Workload Analysis** for cache behavior, **Occupancy** for resident-warp limits, and **Warp State Statistics** for reasons warps could not issue instructions.
+8. Repeat with `--benchmark scattered ...` and the scattered kernel filter. Compare matching metrics under the same boid count, block size, and cell width.
+
+Use Compute when the question is inside one kernel: cache hit rates, memory stalls, branch behavior, occupancy, instruction mix, or whether the kernel is limited by compute or memory behavior. The `detailed` set replays the kernel, so use the ordinary CUDA-event benchmark for final application FPS.
+
+### Nsight debugger from Project 0
+
+The Visual Studio Nsight debugger is for correctness rather than performance. Build the Debug configuration, place a breakpoint in a CUDA kernel, then use **Nsight > Start CUDA Debugging**. When a thread reaches the breakpoint, inspect its `blockIdx`, `threadIdx`, local variables, and device arrays. Use this when a kernel computes the wrong result or accesses bad memory. Return to Release mode for every timing and profiler capture.
+
+If Compute reports that GPU performance counters are unavailable, enable access in the NVIDIA Control Panel under **Desktop > Enable Developer Settings > Developer > Manage GPU Performance Counters**, or run the profiler with an account that has permission.
+
+## 8. Understanding the source changes
 
 `kernel.cu` exposes setters for block size and cell-width multiplier. This allows one Release executable to test every setting without changing source code and recompiling between points.
 

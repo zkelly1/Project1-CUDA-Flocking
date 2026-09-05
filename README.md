@@ -1,90 +1,161 @@
-# CUDA Flocking
+CUDA Flocking
+==============
+
+**University of Pennsylvania, CIS 5650: GPU Programming and Architecture, Project 1**
+
+* Zachary Kelly
+* Tested on: Windows 10 Pro, AMD Ryzen 7 3700X, NVIDIA GeForce RTX 3070 8 GB
+* CUDA 13.3, NVIDIA driver 616.56, Release build
 
 ![Animated boids](images/boids.gif)
 
 ![Boids screenshot](images/boids.png)
 
-University of Pennsylvania, CIS 5650: GPU Programming and Architecture, Project 1 - Flocking
-
-* Student: Zachary Kelly
-* Tested on: Windows 10 Pro, AMD Ryzen 7 3700X, NVIDIA GeForce RTX 3070 8 GB
-* CUDA 13.3, NVIDIA driver 616.56, Release build
-
 ## Implementations
 
-This project contains three CUDA implementations of Reynolds-style flocking:
+I implemented three versions of the flocking simulation:
 
-* **Naive:** every boid checks every other boid.
-* **Scattered uniform grid:** boids are sorted by grid-cell index, but position and velocity reads use the sorted array as an index into the original particle arrays.
-* **Coherent uniform grid:** positions and velocities are gathered into grid-sorted arrays before the neighbor search, making reads within a cell contiguous.
+* **Naive:** Each boid checks every other boid.
+* **Scattered grid:** The boids are sorted by grid cell, but the sorted values are still
+  used to look up positions and velocities in the original arrays.
+* **Coherent grid:** The positions and velocities are copied into grid-sorted arrays so
+  that boids in the same cell are also next to each other in memory.
 
-## Profiling methodology
+## Profiling Setup
 
-I ran all tests in Release mode on the machine listed above. Each plotted point is the mean of three trials, and each error bar is one standard deviation.
+I ran the tests in Release mode. Each point in the graphs is the average of three runs,
+and the error bars show one standard deviation.
 
-For simulation-only results, I disabled the window and used CUDA events around 100 complete simulation steps after 20 warmup steps. Each step includes the work required by that implementation: velocity and position updates for naive; grid construction, Thrust sorting, neighbor search, and updates for the grid methods. FPS is `1000 / mean milliseconds per step`.
+For the simulation-only tests, I turned off the window and timed 100 simulation steps
+after 20 warmup steps. I used CUDA events for the timing. The naive measurement includes
+the velocity and position updates. The grid measurements also include creating the grid,
+sorting with Thrust, finding the cell ranges, and running the neighbor search.
 
-For visualization results, I used a 1280 by 720 window with `glfwSwapInterval(0)`. I discarded 60 warmup frames and timed 120 complete frames. This measurement includes CUDA/OpenGL buffer mapping, simulation, VBO copies, drawing, and buffer swapping. The camera stayed fixed.
+For the tests with visualization, I used a 1280 by 720 window and turned off VSync. I
+ignored the first 60 frames and timed the next 120 frames. These measurements include the
+simulation, CUDA/OpenGL buffer mapping, VBO copies, drawing, and swapping the buffers.
 
-Unless a graph says otherwise, the block size was 128 threads and the grid cell width was twice the maximum flocking-rule distance. The raw trials and averaged values are in [`profiling/results`](profiling/results), and the commands used to reproduce them are in [`profiling/run_profiles.ps1`](profiling/run_profiles.ps1).
+Unless the graph says otherwise, I used 128 threads per block and a grid cell width equal
+to twice the largest rule distance. The raw data is in
+[`profiling/results`](profiling/results).
 
-## Boid count
+## Boid Count
 
 ![Simulation-only boid count profile](images/profile_boid_count_off.png)
 
-The naive method loses performance rapidly as the number of boids increases. It checks every possible pair, so the amount of comparison work grows approximately with the square of the boid count. GPU occupancy hides some of this growth at the smallest counts, but by 40,000 boids the measured rate falls to 20.0 simulation steps per second.
+The naive version got much slower as I added more boids. This makes sense because every
+boid checks every other boid, so the number of checks grows roughly with the square of the
+boid count. At 40,000 boids, the naive version ran at 20.0 simulation steps per second.
 
-The grid methods first pay the cost of computing grid indices, sorting, and building cell ranges. They then inspect only cells that can contain relevant neighbors. Their simulation-only rates remain much flatter: at 40,000 boids, scattered reaches 2,617 FPS and coherent reaches 4,073 FPS. The spatial culling more than repays its preprocessing cost once the flock is large.
+The grid versions have to build and sort the grid first, but they only check cells that
+can contain nearby boids. At 40,000 boids, scattered ran at 2,617 FPS and coherent ran at
+4,073 FPS. The grid setup was worth the extra work once there were a lot of boids.
 
 ![Visualized boid count profile](images/profile_boid_count_on.png)
 
-With visualization enabled, the scattered and coherent implementations cluster around 460-520 FPS. Their simulation steps are faster than the CUDA/OpenGL mapping, VBO copy, draw, and presentation work, so graphics overhead becomes the main frame cost. The naive method still declines with boid count because its simulation eventually dominates that fixed graphics cost.
+With visualization turned on, scattered and coherent both stayed around 460-520 FPS. At
+that point, the simulation was fast enough that buffer mapping, copying, drawing, and
+presenting the frame were a large part of the total frame time. The naive version still
+slowed down because its simulation eventually became more expensive than the graphics
+work.
 
-## Coherent versus scattered grid
+## Coherent Compared to Scattered
 
-The coherent layout improved simulation-only performance. In the boid-count experiment, at 20,000 boids it averaged 4,829 FPS compared with 4,149 FPS for scattered, an improvement of about 16%. At 40,000 boids it averaged 4,073 FPS compared with 2,617 FPS, an improvement of about 56%.
+The coherent version was faster in my simulation-only tests. At 20,000 boids, coherent
+averaged 4,829 FPS and scattered averaged 4,149 FPS, so coherent was about 16% faster. At
+40,000 boids, coherent averaged 4,073 FPS and scattered averaged 2,617 FPS, making coherent
+about 56% faster.
 
-This was the expected direction. Threads processing nearby boids repeatedly read positions and velocities from the same cell ranges. Gathering those values into grid order turns indirect, scattered reads into neighboring reads. The gain is modest at small counts because sorting and gathering add fixed work, and it is mostly hidden in the visualized results because rendering costs more than either grid simulation.
+This is what I expected. In the scattered version, the sorted particle indices lead back
+to positions and velocities spread throughout the original arrays. In the coherent
+version, nearby boids are stored next to each other. This gives the threads better memory
+access and becomes more useful as the number of boids increases.
 
-## Block size and block count
+## NVIDIA Nsight
+
+I used Nsight Systems on the full visualized program and Nsight Compute on one launch of
+each neighbor-search kernel. I generated the images below from the exported profiler data
+so the important values are easy to read. The exported data and original `.ncu-rep` files are in [`profiling/results`](profiling/results). Run `profiling/run_nsight_profiles.ps1` to regenerate the interactive Nsight Systems report.
+
+![Nsight Systems CUDA timeline](images/nsight-systems-timeline.png)
+
+The Systems timeline shows the steps in one coherent-grid frame. It computes the grid
+indices, sorts them, resets and fills the cell ranges, gathers the coherent arrays, runs
+the neighbor search, updates the positions, and copies the results to the OpenGL VBOs.
+The blank areas are CPU or CUDA API work between kernel launches.
+
+In the full capture, the coherent neighbor kernel used 28.8% of the CUDA kernel time. The
+CUB radix-sort kernels used about half of the kernel time together. This showed me that
+both sorting the grid and searching for neighbors are important parts of the frame.
+
+![Nsight Compute scattered kernel report](images/nsight-compute-scattered.png)
+
+![Nsight Compute coherent kernel report](images/nsight-compute-coherent.png)
+
+For 20,000 boids, the coherent neighbor kernel took 20.29 microseconds and the scattered
+kernel took 42.66 microseconds. The coherent L1/TEX hit rate was 95.32%, compared with
+55.72% for scattered. Long-scoreboard stall samples also dropped from 1,689 to 292. These
+stalls happen when a warp is waiting for a memory result that another instruction needs.
+
+The results match the reason for making the coherent version. Keeping nearby boids next
+to each other improved the cache hit rate and made the kernel wait less for memory. Nsight
+Compute replays the kernel to collect its counters, so I used the CUDA-event measurements
+instead of the Compute duration for the final FPS graphs.
+
+## Block Size and Block Count
 
 ![Block-size profile](images/profile_block_size.png)
 
-Changing the block size also changes the block count according to `ceil(numberOfBoids / blockSize)`. More, smaller blocks give the scheduler flexibility to distribute work, while very large blocks reduce the number of blocks that can reside on a streaming multiprocessor when registers, warps, or other resources become limiting.
+Changing the block size also changes the number of blocks. I calculated the block count
+with `ceil(numberOfBoids / blockSize)`. Smaller blocks give the GPU more blocks to schedule,
+while very large blocks can limit how many blocks fit on one streaming multiprocessor.
 
-For naive, 32 and 64 threads were best at about 78.8 FPS, while 1,024 threads fell to 49.8 FPS. Scattered was also strongest at 32-64 threads and gradually declined at larger sizes. Coherent stayed within roughly 4,600-4,830 FPS across the tested sizes and peaked at 512 threads. There is no universal best block size here because the kernels differ in control flow and memory-access behavior; 128 remains a reasonable common setting, although it was not the measured optimum for every implementation on this GPU.
+For naive, 32 and 64 threads per block were fastest at about 78.8 FPS. It dropped to 49.8
+FPS with 1,024 threads. Scattered was also fastest around 32-64 threads and slowly dropped
+with larger blocks. Coherent stayed around 4,600-4,830 FPS and was fastest at 512 threads.
 
-## Cell width: 27 cells versus 8 cells
+There was not one block size that was best for every version. I kept 128 as the common
+size because it performed reasonably well for all three implementations.
+
+## Cell Width: 27 Cells Compared to 8 Cells
 
 ![Cell-width profile](images/profile_cell_width.png)
 
-Using cells twice the maximum interaction distance, which requires at most eight candidate cells, was 2.76 times faster for scattered and 2.92 times faster for coherent than using cells equal to the interaction distance and checking as many as 27 cells.
+Using a cell width twice the largest rule distance means a boid searches at most eight
+cells. This was 2.76 times faster for scattered and 2.92 times faster for coherent than
+using a cell width equal to the rule distance and searching as many as 27 cells.
 
-The explanation is more specific than "27 is greater than 8." Smaller cells contain fewer particles, which can reduce the number of distance tests. At uniform density, 27 cells of width `r` cover less total volume than eight cells of width `2r`, so the 27-cell version can theoretically examine fewer particle candidates. In this test, however, the extra nested-loop iterations, cell-index calculations, and start/end lookups were expensive, and many visited cells were empty. Those costs outweighed the reduction in candidates per cell.
+The smaller cells can contain fewer boids, so the 27-cell version can sometimes perform
+fewer particle distance checks. In my test, however, it had to run more grid-loop
+iterations and perform more cell start/end lookups. A lot of the cells were also empty.
+That extra work was more expensive than checking the larger eight cells.
 
-## Reproducing the results
+## Reproducing the Results
 
-Build and run the full profiling sweep from PowerShell at the repository root:
+I ran these commands from PowerShell in the repository root:
 
 ```powershell
 cmake --build build --config Release --parallel
 powershell -ExecutionPolicy Bypass -File .\profiling\run_profiles.ps1 -Trials 3
 powershell -ExecutionPolicy Bypass -File .\profiling\capture_boids.ps1
 py .\profiling\make_outputs.py
+powershell -ExecutionPolicy Bypass -File .\profiling\run_nsight_profiles.ps1
 ```
 
-One simulation-only measurement can be reproduced directly:
+I used this command for one simulation-only measurement:
 
 ```powershell
 .\build\bin\Release\cis5650_boids.exe --benchmark coherent 20000 128 2 20 100
 ```
 
-The arguments are implementation, boid count, block size, cell-width multiplier, warmup steps, and measured steps. The program prints the mean milliseconds per step and FPS.
+The arguments are the implementation, boid count, block size, cell-width multiplier,
+warmup steps, and measured steps. The program prints the average milliseconds per step and
+FPS.
 
-One visualized measurement can be reproduced with:
+I used this command for one measurement with visualization:
 
 ```powershell
 .\build\bin\Release\cis5650_boids.exe --window-profile coherent 20000 128 2 60 120
 ```
 
-The visual mode measures the complete rendered frame. VSync is disabled in the application for profiling.
+This measures the entire rendered frame. VSync is disabled while profiling.
